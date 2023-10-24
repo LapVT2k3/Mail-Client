@@ -127,17 +127,18 @@ public class Login extends javax.swing.JFrame {
     }
     private void btnExitActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnExitActionPerformed
         this.dispose();
+        System.exit(0);
     }//GEN-LAST:event_btnExitActionPerformed
     private void btnLoginActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnLoginActionPerformed
         if (KiemTraKetNoi() == 1) {
             try {
                 saveProperties(txtUserName.getText(), txtPassword.getText());
-                dispose();
                 try {
                     Mail_Client frmNhanMail = new Mail_Client(txtUserName.getText(), txtPassword.getText());
                     frmNhanMail.setPassword(txtPassword.getText());
                     frmNhanMail.setUserName(txtUserName.getText());
                     frmNhanMail.setVisible(true);
+                    dispose();
                 } catch (MessagingException ex) {
                     JOptionPane.showMessageDialog(null, "Lỗi: " + ex.getMessage(), "Thông báo", 1);
                 }
