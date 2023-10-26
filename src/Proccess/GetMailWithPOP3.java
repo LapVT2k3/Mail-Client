@@ -35,26 +35,20 @@ public class GetMailWithPOP3 {
         });
         Store store = session.getStore();
         store.connect();
-        Folder[] folders = store.getDefaultFolder().list("*");
-        for (Folder folder : folders) {
-            if (!folder.isOpen()) {
-                folder.open(Folder.READ_ONLY);
+        Folder folderInbox = store.getFolder("INBOX");
+        folderInbox.open(Folder.READ_ONLY);
+        Message[] messages = folderInbox.getMessages();
+        for (Message message : messages) {
+            String from = "";
+            InternetAddress[] addresses = (InternetAddress[]) message.getFrom();
+            for (InternetAddress address : addresses) {
+                from += address.getAddress();
             }
-
-            Message[] messages = folder.getMessages();
-
-            for (Message message : messages) {
-                String from = "";
-                InternetAddress[] addresses = (InternetAddress[]) message.getFrom();
-                for (InternetAddress address : addresses) {
-                    from += address.getAddress();
-                }
-                String contentType = message.getContentType();
-                Data.add(new DataInformation(message.getSubject(), message.getSentDate().toString(), from));
-            }
+            Data.add(new DataInformation(message.getSubject(), message.getSentDate().toString(), from));
         }
         String[] headers = {"Tiêu Đề", "Người Gửi", "Thời Gian"};
         dataInfoModel = new DataInformationModel(headers, Data);
+        store.close();
         return dataInfoModel;
     }
 }

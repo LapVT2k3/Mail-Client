@@ -1,19 +1,23 @@
 package Interface;
 
-import com.sun.mail.util.BASE64DecoderStream;
 import java.awt.HeadlessException;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Date;
 import java.util.Properties;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.mail.Authenticator;
 import javax.mail.Folder;
 import javax.mail.Message;
 import javax.mail.MessagingException;
 import javax.mail.Multipart;
 import javax.mail.NoSuchProviderException;
+import javax.mail.Part;
 import javax.mail.PasswordAuthentication;
 import javax.mail.Session;
 import javax.mail.Store;
@@ -23,9 +27,10 @@ import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeBodyPart;
 import javax.mail.internet.MimeMessage;
 import javax.mail.internet.MimeMultipart;
+import javax.swing.JButton;
+import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableModel;
 
 public class Mail_Client extends javax.swing.JFrame {
 
@@ -47,50 +52,92 @@ public class Mail_Client extends javax.swing.JFrame {
     public void setPassword(String pass) {
         this.password = pass;
     }
-
-    public void ReadMail(int n) throws IOException {
+    
+    private Store store;
+    private Folder folderInbox;
+    
+    public void ReadMail(int n) {
         Properties props = new Properties();
         props.setProperty("mail.store.protocol", "imaps");
         try {
             Session session = Session.getInstance(props, null);
-            Store store = session.getStore();
+            store = session.getStore();
             store.connect("imap.gmail.com", userName, password);
-            Folder folderInbox = store.getFolder("INBOX");
+            folderInbox = store.getFolder("INBOX");
             folderInbox.open(Folder.READ_ONLY);
             Message[] messages = folderInbox.getMessages();
             Message msg = messages[n];
             String contentType = msg.getContentType();
             String messageContent = "";
+            jPanelFile.removeAll();
+            jPanelFile.revalidate();
+            jPanelFile.repaint();
             if (contentType.contains("multipart")) {
                 Multipart multiPart = (Multipart) msg.getContent();
                 int numberOfParts = multiPart.getCount();
-                for (int partCount = 0; partCount < numberOfParts; partCount++) {
-                    MimeBodyPart part = (MimeBodyPart) multiPart.getBodyPart(partCount);
-                    messageContent = part.getContent().toString();
-                }
-            } else if (contentType.contains("text/html")) {
-                try {
-                    BASE64DecoderStream content = (BASE64DecoderStream) msg.getContent();
-                    if (content != null) {
-                        messageContent = content.toString();
+                for (int i = 0; i < numberOfParts; i++) {
+                    final MimeBodyPart part = (MimeBodyPart) multiPart.getBodyPart(i);
+                    if (Part.ATTACHMENT.equalsIgnoreCase(part.getDisposition())) {
+                        String fileName = part.getFileName();
+                        JButton fileButton = new JButton(fileName);
+                        fileButton.addActionListener(new FileButtonActionListener(part, fileName));
+                        jPanelFile.add(fileButton);
+                    } else if (part.getContentType().contains("multipart")) {
+                        Multipart m = (Multipart) part.getContent();
+                        for (int j = 0; j < m.getCount(); j++) {
+                            MimeBodyPart p = (MimeBodyPart) m.getBodyPart(j);
+                            messageContent = p.getContent().toString();
+                        }
+                    } else {
+                        messageContent = part.getContent().toString();
                     }
-                } catch (IOException | MessagingException ex) {
-                    messageContent = "[Không thể tải nội dung]";
                 }
+            } else if (contentType.contains("text/html") || contentType.contains("text/plain")) {
+                messageContent = msg.getContent().toString();
             }
-            System.out.println("Nội dung: " + messageContent);
             ePnlNoiDung.setContentType("text/html");
             ePnlNoiDung.setText(messageContent);
-            folderInbox.close(false);
-            store.close();
-        } catch (NoSuchProviderException ex) {
-            System.out.println("Lỗi 1: " + ex.getMessage());
-        } catch (MessagingException ex) {
-            System.out.println("Lỗi 2: " + ex.getMessage());
+//            folderInbox.close(false);
+//            store.close();
+        } catch (IOException | MessagingException ex) {
+            System.out.println("Lỗi: " + ex.getMessage());
         }
     }
 
-    public static void sendEmail(Properties smtpProperties, String toAddress,
+    class FileButtonActionListener implements ActionListener {
+        private final MimeBodyPart part;
+        private final String fileName;
+
+        public FileButtonActionListener(MimeBodyPart part, String fileName) throws IOException, MessagingException {
+            this.part = part;
+            this.fileName = fileName;
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            JFileChooser folderChooser = new JFileChooser();
+            folderChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                
+            int result = folderChooser.showOpenDialog(null);
+
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFolder = folderChooser.getSelectedFile();
+
+                try {
+                    part.saveFile(selectedFolder.getPath() + File.separator + fileName);
+                    JOptionPane.showMessageDialog(null, "Tải file " + fileName + " thành công!");
+                } catch (MessagingException ex) {
+                    System.out.println("hihi");
+                    Logger.getLogger(Mail_Client.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (IOException ex) {
+                    System.out.println("huhu");
+                    Logger.getLogger(Mail_Client.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            }
+        }
+    }
+    
+    public static void sendEmail(Properties smtpProperties, String toAddress, String cc, String bcc,
             String subject, String message, File[] attachFiles)
             throws AddressException, MessagingException, IOException {
 
@@ -110,8 +157,17 @@ public class Mail_Client extends javax.swing.JFrame {
         Message msg = new MimeMessage(session);
 
         msg.setFrom(new InternetAddress(userName));
-        InternetAddress[] toAddresses = {new InternetAddress(toAddress)};
-        msg.setRecipients(Message.RecipientType.TO, toAddresses);
+        InternetAddress[] listEmailTo = {new InternetAddress(toAddress)};
+        msg.setRecipients(Message.RecipientType.TO, listEmailTo);
+        if (!"".equals(cc)) {
+            InternetAddress[] listEmailCc = {new InternetAddress(cc)};
+            msg.setRecipients(Message.RecipientType.CC, listEmailCc);
+        }
+        if (!"".equals(bcc)) {
+            InternetAddress[] listEmailBcc = {new InternetAddress(bcc)};
+            msg.setRecipients(Message.RecipientType.BCC, listEmailBcc);
+        }
+
         msg.setSubject(subject);
         msg.setSentDate(new Date());
 
@@ -170,7 +226,7 @@ public class Mail_Client extends javax.swing.JFrame {
 
         return true;
     }
-    private File configFile = new File("smtp.properties");
+    private final File configFile = new File("smtp.properties");
     private Properties configProps;
 
     public Properties loadProperties() throws IOException {
@@ -228,6 +284,7 @@ public class Mail_Client extends javax.swing.JFrame {
         jLabel9 = new javax.swing.JLabel();
         btnGopY = new javax.swing.JButton();
         lblUser = new javax.swing.JLabel();
+        btnRefresh = new javax.swing.JButton();
         jPanel1 = new javax.swing.JPanel();
         pnlSoanThu = new javax.swing.JPanel();
         jLabel1 = new javax.swing.JLabel();
@@ -239,6 +296,14 @@ public class Mail_Client extends javax.swing.JFrame {
         btnGui = new javax.swing.JButton();
         jScrollPane4 = new javax.swing.JScrollPane();
         txtNoiDung = new javax.swing.JEditorPane();
+        jLabel11 = new javax.swing.JLabel();
+        jLabel13 = new javax.swing.JLabel();
+        jLabel14 = new javax.swing.JLabel();
+        txtCc = new javax.swing.JTextField();
+        txtBcc = new javax.swing.JTextField();
+        jButtonChooseFile = new javax.swing.JButton();
+        jLabelFile = new javax.swing.JLabel();
+        jButtonDeleteFile = new javax.swing.JButton();
         pnlHopThuDen = new javax.swing.JPanel();
         jScrollPane2 = new javax.swing.JScrollPane();
         jTable1 = new javax.swing.JTable();
@@ -253,6 +318,9 @@ public class Mail_Client extends javax.swing.JFrame {
         ePnlNoiDung = new javax.swing.JEditorPane();
         btnTraLoi = new javax.swing.JButton();
         btnChuyenTiep = new javax.swing.JButton();
+        jLabel12 = new javax.swing.JLabel();
+        jLabel15 = new javax.swing.JLabel();
+        jPanelFile = new javax.swing.JPanel();
 
         jLabel5.setText("jLabel5");
 
@@ -298,6 +366,13 @@ public class Mail_Client extends javax.swing.JFrame {
         lblUser.setFont(new java.awt.Font("Times New Roman", 0, 10)); // NOI18N
         lblUser.setText(".");
 
+        btnRefresh.setText("Làm mới");
+        btnRefresh.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                btnRefreshActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout pnlDieuKhienLayout = new javax.swing.GroupLayout(pnlDieuKhien);
         pnlDieuKhien.setLayout(pnlDieuKhienLayout);
         pnlDieuKhienLayout.setHorizontalGroup(
@@ -311,7 +386,8 @@ public class Mail_Client extends javax.swing.JFrame {
                     .addComponent(btnSoanThu)
                     .addComponent(btnThoat)
                     .addComponent(btnGopY)
-                    .addComponent(lblUser))
+                    .addComponent(lblUser)
+                    .addComponent(btnRefresh))
                 .addGap(0, 74, Short.MAX_VALUE))
         );
         pnlDieuKhienLayout.setVerticalGroup(
@@ -321,8 +397,10 @@ public class Mail_Client extends javax.swing.JFrame {
                 .addComponent(lblUser)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addComponent(jLabel9, javax.swing.GroupLayout.PREFERRED_SIZE, 54, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 77, Short.MAX_VALUE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(btnLogout)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(btnRefresh)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(btnHopThuDen)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
@@ -338,11 +416,11 @@ public class Mail_Client extends javax.swing.JFrame {
         jLabel1.setForeground(new java.awt.Color(0, 0, 204));
         jLabel1.setText("SOẠN THƯ");
 
-        jLabel2.setText("Tới");
+        jLabel2.setText("Đến");
 
-        jLabel3.setText("Chủ đề:");
+        jLabel3.setText("Tiêu đề");
 
-        jLabel4.setText("Nội dung:");
+        jLabel4.setText("Nội dung");
 
         btnGui.setText("Gửi");
         btnGui.addActionListener(new java.awt.event.ActionListener() {
@@ -353,10 +431,51 @@ public class Mail_Client extends javax.swing.JFrame {
 
         jScrollPane4.setViewportView(txtNoiDung);
 
+        jLabel11.setText("Đính kèm");
+
+        jLabel13.setText("Cc");
+
+        jLabel14.setText("Bcc");
+
+        jButtonChooseFile.setText("Chọn File");
+        jButtonChooseFile.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButtonChooseFileActionPerformed(evt);
+            }
+        });
+
+        jButtonDeleteFile.setText("Xóa File");
+        jButtonDeleteFile.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButtonDeleteFileActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout pnlSoanThuLayout = new javax.swing.GroupLayout(pnlSoanThu);
         pnlSoanThu.setLayout(pnlSoanThuLayout);
         pnlSoanThuLayout.setHorizontalGroup(
             pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(pnlSoanThuLayout.createSequentialGroup()
+                .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(pnlSoanThuLayout.createSequentialGroup()
+                        .addContainerGap()
+                        .addComponent(jLabel13)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(txtCc))
+                    .addGroup(pnlSoanThuLayout.createSequentialGroup()
+                        .addGap(207, 207, 207)
+                        .addComponent(btnGui)
+                        .addGap(0, 218, Short.MAX_VALUE))
+                    .addGroup(pnlSoanThuLayout.createSequentialGroup()
+                        .addContainerGap()
+                        .addComponent(jLabel14)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(txtBcc)))
+                .addContainerGap())
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, pnlSoanThuLayout.createSequentialGroup()
+                .addContainerGap(197, Short.MAX_VALUE)
+                .addComponent(jLabel1, javax.swing.GroupLayout.PREFERRED_SIZE, 135, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(171, 171, 171))
             .addGroup(pnlSoanThuLayout.createSequentialGroup()
                 .addContainerGap()
                 .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -370,26 +489,22 @@ public class Mail_Client extends javax.swing.JFrame {
                         .addComponent(txtSub))
                     .addGroup(pnlSoanThuLayout.createSequentialGroup()
                         .addComponent(jLabel4)
-                        .addGap(0, 0, Short.MAX_VALUE)))
+                        .addGap(0, 0, Short.MAX_VALUE))
+                    .addGroup(pnlSoanThuLayout.createSequentialGroup()
+                        .addComponent(jLabel11)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(jLabelFile, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(jButtonChooseFile)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(jButtonDeleteFile))
+                    .addComponent(jScrollPane4))
                 .addContainerGap())
-            .addGroup(pnlSoanThuLayout.createSequentialGroup()
-                .addGap(183, 183, 183)
-                .addComponent(btnGui)
-                .addContainerGap(170, Short.MAX_VALUE))
-            .addGroup(pnlSoanThuLayout.createSequentialGroup()
-                .addContainerGap()
-                .addComponent(jScrollPane4)
-                .addContainerGap())
-            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, pnlSoanThuLayout.createSequentialGroup()
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                .addComponent(jLabel1)
-                .addGap(141, 141, 141))
         );
         pnlSoanThuLayout.setVerticalGroup(
             pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(pnlSoanThuLayout.createSequentialGroup()
-                .addContainerGap()
-                .addComponent(jLabel1)
+                .addComponent(jLabel1, javax.swing.GroupLayout.PREFERRED_SIZE, 35, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(jLabel2)
@@ -399,10 +514,28 @@ public class Mail_Client extends javax.swing.JFrame {
                     .addComponent(jLabel3)
                     .addComponent(txtSub, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel13)
+                    .addComponent(txtCc, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel14)
+                    .addComponent(txtBcc, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addGap(12, 12, 12)
                 .addComponent(jLabel4)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jScrollPane4)
+                .addComponent(jScrollPane4, javax.swing.GroupLayout.PREFERRED_SIZE, 345, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addComponent(jLabelFile, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addGroup(pnlSoanThuLayout.createSequentialGroup()
+                        .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addGroup(pnlSoanThuLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                                .addComponent(jButtonChooseFile)
+                                .addComponent(jButtonDeleteFile))
+                            .addComponent(jLabel11))
+                        .addGap(0, 0, Short.MAX_VALUE)))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(btnGui)
                 .addGap(17, 17, 17))
         );
@@ -433,11 +566,13 @@ public class Mail_Client extends javax.swing.JFrame {
         pnlHopThuDen.setLayout(pnlHopThuDenLayout);
         pnlHopThuDenLayout.setHorizontalGroup(
             pnlHopThuDenLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(jScrollPane2, javax.swing.GroupLayout.DEFAULT_SIZE, 424, Short.MAX_VALUE)
-            .addGroup(pnlHopThuDenLayout.createSequentialGroup()
-                .addGap(117, 117, 117)
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, pnlHopThuDenLayout.createSequentialGroup()
+                .addContainerGap(170, Short.MAX_VALUE)
                 .addComponent(jLabel10)
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGap(157, 157, 157))
+            .addGroup(pnlHopThuDenLayout.createSequentialGroup()
+                .addComponent(jScrollPane2, javax.swing.GroupLayout.DEFAULT_SIZE, 491, Short.MAX_VALUE)
+                .addContainerGap())
         );
         pnlHopThuDenLayout.setVerticalGroup(
             pnlHopThuDenLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -445,22 +580,30 @@ public class Mail_Client extends javax.swing.JFrame {
                 .addGap(21, 21, 21)
                 .addComponent(jLabel10)
                 .addGap(18, 18, 18)
-                .addComponent(jScrollPane2, javax.swing.GroupLayout.DEFAULT_SIZE, 325, Short.MAX_VALUE))
+                .addComponent(jScrollPane2, javax.swing.GroupLayout.DEFAULT_SIZE, 541, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout jPanel1Layout = new javax.swing.GroupLayout(jPanel1);
         jPanel1.setLayout(jPanel1Layout);
         jPanel1Layout.setHorizontalGroup(
             jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(pnlSoanThu, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+            .addGroup(jPanel1Layout.createSequentialGroup()
+                .addComponent(pnlSoanThu, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(0, 12, Short.MAX_VALUE))
             .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                .addComponent(pnlHopThuDen, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGroup(jPanel1Layout.createSequentialGroup()
+                    .addComponent(pnlHopThuDen, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))
         );
         jPanel1Layout.setVerticalGroup(
             jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(pnlSoanThu, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel1Layout.createSequentialGroup()
+                .addGap(0, 7, Short.MAX_VALUE)
+                .addComponent(pnlSoanThu, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
             .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                .addComponent(pnlHopThuDen, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGroup(jPanel1Layout.createSequentialGroup()
+                    .addComponent(pnlHopThuDen, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addGap(0, 15, Short.MAX_VALUE)))
         );
 
         jLabel6.setFont(new java.awt.Font("Times New Roman", 1, 24)); // NOI18N
@@ -487,6 +630,12 @@ public class Mail_Client extends javax.swing.JFrame {
             }
         });
 
+        jLabel12.setText("Nội dung");
+
+        jLabel15.setText("Đính kèm");
+
+        jPanelFile.setLayout(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT));
+
         javax.swing.GroupLayout pnlNoiDungLayout = new javax.swing.GroupLayout(pnlNoiDung);
         pnlNoiDung.setLayout(pnlNoiDungLayout);
         pnlNoiDungLayout.setHorizontalGroup(
@@ -504,37 +653,54 @@ public class Mail_Client extends javax.swing.JFrame {
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                         .addComponent(txtNguoiGui)))
                 .addContainerGap())
-            .addGroup(pnlNoiDungLayout.createSequentialGroup()
-                .addGap(136, 136, 136)
-                .addComponent(jLabel6)
-                .addGap(0, 88, Short.MAX_VALUE))
             .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, pnlNoiDungLayout.createSequentialGroup()
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .addGap(160, 160, 160)
                 .addComponent(btnTraLoi)
-                .addGap(32, 32, 32)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(btnChuyenTiep)
-                .addGap(112, 112, 112))
+                .addGap(82, 82, 82))
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, pnlNoiDungLayout.createSequentialGroup()
+                .addContainerGap(239, Short.MAX_VALUE)
+                .addComponent(jLabel6)
+                .addGap(194, 194, 194))
+            .addGroup(pnlNoiDungLayout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(pnlNoiDungLayout.createSequentialGroup()
+                        .addComponent(jLabel12)
+                        .addGap(0, 0, Short.MAX_VALUE))
+                    .addGroup(pnlNoiDungLayout.createSequentialGroup()
+                        .addComponent(jLabel15)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(jPanelFile, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))
+                .addContainerGap())
         );
         pnlNoiDungLayout.setVerticalGroup(
             pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(pnlNoiDungLayout.createSequentialGroup()
-                .addGap(6, 6, 6)
+                .addContainerGap()
                 .addComponent(jLabel6)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(txtTieuDe, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(jLabel7))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel7)
-                    .addComponent(txtTieuDe, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(txtNguoiGui, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(jLabel8))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel8)
-                    .addComponent(txtNguoiGui, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addComponent(jScrollPane3, javax.swing.GroupLayout.PREFERRED_SIZE, 239, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(btnTraLoi)
-                    .addComponent(btnChuyenTiep))
-                .addContainerGap(12, Short.MAX_VALUE))
+                .addComponent(jLabel12)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(jScrollPane3, javax.swing.GroupLayout.PREFERRED_SIZE, 412, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(18, 18, 18)
+                .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(jPanelFile, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(jLabel15, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 16, Short.MAX_VALUE)
+                .addGroup(pnlNoiDungLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addComponent(btnChuyenTiep)
+                    .addComponent(btnTraLoi))
+                .addGap(10, 10, 10))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
@@ -545,8 +711,9 @@ public class Mail_Client extends javax.swing.JFrame {
                 .addComponent(pnlDieuKhien, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(pnlNoiDung, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addComponent(pnlNoiDung, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .addContainerGap())
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -566,11 +733,7 @@ public class Mail_Client extends javax.swing.JFrame {
         txtNguoiGui.setText(model.getValueAt(jTable1.getSelectedRow(), 1).toString());
         int n = jTable1.getSelectedRow();
         System.out.println("Hang: " + n);
-        try {
-            ReadMail(n);
-        } catch (IOException ex) {
-            System.out.println("Lỗi: " + ex.getMessage());
-        }
+        ReadMail(n);
     }//GEN-LAST:event_jTable1MouseClicked
 
     private void btnGuiActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnGuiActionPerformed
@@ -578,16 +741,25 @@ public class Mail_Client extends javax.swing.JFrame {
             return;
         }
         String toAddress = txtToi.getText();
+        String cc = txtCc.getText();
+        String bcc = txtBcc.getText();
         String subject = txtSub.getText();
         String message = txtNoiDung.getText();
-        File[] attachFiles = null;
+        File[] attachFiles;
+        String fileString = jLabelFile.getText();
+        if ("".equals(fileString)) {
+            attachFiles = null;
+        } else {
+            attachFiles = new File[]{new File(fileString)};
+        }
         try {
             System.out.println("user: " + getUserName());
             System.out.println("pass: " + getPassword());
             Properties smtpProperties = loadProperties();
-            sendEmail(smtpProperties, toAddress, subject, message, attachFiles);
+            sendEmail(smtpProperties, toAddress, cc, bcc, subject, message, attachFiles);
             JOptionPane.showMessageDialog(this,
                     "Gửi email thành công!");
+            jLabelFile.setText("");
         } catch (HeadlessException | IOException | MessagingException ex) {
             JOptionPane.showMessageDialog(this,
                     "Lỗi: " + ex.getMessage(),
@@ -614,8 +786,14 @@ public class Mail_Client extends javax.swing.JFrame {
     }//GEN-LAST:event_btnSoanThuActionPerformed
 
     private void btnThoatActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnThoatActionPerformed
-        // TODO add your handling code here:
-        this.dispose();
+        try {
+            // TODO add your handling code here:
+            if (folderInbox.isOpen()) folderInbox.close(false);
+            if (store.isConnected()) store.close();
+            this.dispose();
+        } catch (MessagingException ex) {
+            Logger.getLogger(Mail_Client.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }//GEN-LAST:event_btnThoatActionPerformed
 
     private void btnTraLoiActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnTraLoiActionPerformed
@@ -628,6 +806,13 @@ public class Mail_Client extends javax.swing.JFrame {
 
     private void btnLogoutActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnLogoutActionPerformed
         // TODO add your handling code here:
+        try {
+            // TODO add your handling code here:
+            if (folderInbox.isOpen()) folderInbox.close(false);
+            if (store.isConnected()) store.close();
+        } catch (MessagingException ex) {
+            Logger.getLogger(Mail_Client.class.getName()).log(Level.SEVERE, null, ex);
+        }
         setUserName("");
         setPassword("");
         this.dispose();
@@ -656,6 +841,34 @@ public class Mail_Client extends javax.swing.JFrame {
         txtNoiDung.setContentType("text/html");
         txtNoiDung.setText(ePnlNoiDung.getText());
     }//GEN-LAST:event_btnChuyenTiepActionPerformed
+
+    private void jButtonChooseFileActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButtonChooseFileActionPerformed
+        // TODO add your handling code here:
+        JFileChooser fileChooser = new JFileChooser();
+        File f = null;
+        int returnValue = fileChooser.showOpenDialog(null);
+        if (returnValue == JFileChooser.APPROVE_OPTION) {
+            f = fileChooser.getSelectedFile();
+        }
+        if (f != null) jLabelFile.setText(f.getPath());
+    }//GEN-LAST:event_jButtonChooseFileActionPerformed
+
+    private void btnRefreshActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnRefreshActionPerformed
+        // TODO add your handling code here:
+        Proccess.GetMailWithPOP3 gm = new Proccess.GetMailWithPOP3();
+        try {
+            jTable1.setModel(gm.getMailWithPOP3(getUserName(), getPassword()));
+            JOptionPane.showMessageDialog(this,
+                    "Làm mới thành công!");
+        } catch (MessagingException | IOException ex) {
+            Logger.getLogger(Mail_Client.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }//GEN-LAST:event_btnRefreshActionPerformed
+
+    private void jButtonDeleteFileActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButtonDeleteFileActionPerformed
+        // TODO add your handling code here:
+        jLabelFile.setText("");
+    }//GEN-LAST:event_jButtonDeleteFileActionPerformed
 
     /**
      * @param args the command line arguments
@@ -699,12 +912,20 @@ public class Mail_Client extends javax.swing.JFrame {
     private javax.swing.JButton btnGui;
     private javax.swing.JButton btnHopThuDen;
     private javax.swing.JButton btnLogout;
+    private javax.swing.JButton btnRefresh;
     private javax.swing.JButton btnSoanThu;
     private javax.swing.JButton btnThoat;
     private javax.swing.JButton btnTraLoi;
     private javax.swing.JEditorPane ePnlNoiDung;
+    private javax.swing.JButton jButtonChooseFile;
+    private javax.swing.JButton jButtonDeleteFile;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel10;
+    private javax.swing.JLabel jLabel11;
+    private javax.swing.JLabel jLabel12;
+    private javax.swing.JLabel jLabel13;
+    private javax.swing.JLabel jLabel14;
+    private javax.swing.JLabel jLabel15;
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel3;
     private javax.swing.JLabel jLabel4;
@@ -713,7 +934,9 @@ public class Mail_Client extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel7;
     private javax.swing.JLabel jLabel8;
     private javax.swing.JLabel jLabel9;
+    private javax.swing.JLabel jLabelFile;
     private javax.swing.JPanel jPanel1;
+    private javax.swing.JPanel jPanelFile;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JScrollPane jScrollPane3;
     private javax.swing.JScrollPane jScrollPane4;
@@ -723,6 +946,8 @@ public class Mail_Client extends javax.swing.JFrame {
     private javax.swing.JPanel pnlHopThuDen;
     private javax.swing.JPanel pnlNoiDung;
     private javax.swing.JPanel pnlSoanThu;
+    private javax.swing.JTextField txtBcc;
+    private javax.swing.JTextField txtCc;
     private javax.swing.JTextField txtNguoiGui;
     private javax.swing.JEditorPane txtNoiDung;
     private javax.swing.JTextField txtSub;
